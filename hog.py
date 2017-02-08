@@ -220,7 +220,7 @@ def get_hard_negatives(svm, negative_set):
 		print(i, image.shape)
 		i += 1
 		subWindowsIndexes = getSubWindows(image)
-		percentIndexes = 0.1
+		percentIndexes = 1
 		subWindowsIndexes = random.sample(subWindowsIndexes, int(len(subWindowsIndexes) * percentIndexes))
 		# Create sub image
 		for index in subWindowsIndexes:
@@ -266,9 +266,6 @@ def getRectangleIntegralHistogram(integralHistogram, cell_indexes):
 	return rectangleBin
 
 def train_image(image):
-	height = image.shape[0]
-	width = image.shape[1]
-	
 	gradientImage = computeCenteredGradient(image)
 
 	cells_matrix = getOrientationBinMatrix(gradientImage)
@@ -277,8 +274,6 @@ def train_image(image):
 	return hog_descriptor
 
 def getHogFromIntegralImage(gradientImage, integralHistogram):
-	integralHistogram = getIntegralHistogram(gradientImage)
-	
 	cells_matrix = getOrientationBinMatrix(gradientImage, integralHistogram)
 	hog_descriptor = getHogDescriptor(cells_matrix)
 	return hog_descriptor
@@ -292,7 +287,7 @@ def svm_classify(svm, data, classes, message="RBF"):
 			good += 1
 	print("[", message, "] Accuracy on training set: ", good / len(result), sep="")
 
-def prepare_data_for_svm(dataset, random_negative_windows_count=10):
+def prepare_data_for_svm(dataset, random_negative_windows_count=10, useIntegralImage = False):
 	data = []
 	classes = []
 	
@@ -305,19 +300,33 @@ def prepare_data_for_svm(dataset, random_negative_windows_count=10):
 		classes.append("pos")
 
 	print("Getting descriptor for negative images")
+
+	gradientImage = None
+	integralHistogram = None
+
+	if useIntegralImage:
+		gradientImage = computeCenteredGradient(image)
+		integralHistogram = getIntegralHistogram(gradientImage)
+
 	i = 0
 	for image in dataset["neg"]:
 		i += 1
-		descriptor = train_image(image)
 		# Get random windows in each negative image for training.
 		print(i, image.shape)
 		subWindowsIndexes = getSubWindows(image)
-		subWindowsIndexes = random.sample(subWindowsIndexes, random_negative_windows_count)
+		if random_negative_windows_count != None:
+			subWindowsIndexes = random.sample(subWindowsIndexes, random_negative_windows_count)
 		for index in subWindowsIndexes:
 			top_left = index[0]
 			bottom_right = index[1]
 			sub_image = np.array(image[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]])
-			descriptor = train_image(sub_image)
+
+			descriptor = None
+			if useIntegralImage:
+				descriptor = getHogFromIntegralImage(gradientImage, integralHistogram)
+			else:
+				descriptor = train_image(sub_image)
+				
 			data.append(descriptor)
 			classes.append("neg")
 	return (data, classes)
