@@ -35,7 +35,7 @@ def computeCenteredXGradient(grayscaleImage):
 		for j in range(start_width, end_width):
 			if j == start_width:
 				gradientXImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j: j + 2], uncenteredKernel)
-			elif j == end_width:
+			elif j == end_width - 1:
 				gradientXImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 1], uncenteredKernel)
 			else:
 				gradientXImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 2], centeredKernel)
@@ -60,7 +60,7 @@ def computeCenteredYGradient(grayscaleImage):
 		for j in range(start_width, end_width):
 			if j == start_width:
 				gradientYImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j: j + 2], uncenteredKernel)
-			elif j == end_width:
+			elif j == end_width - 1:
 				gradientYImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 1], uncenteredKernel)
 			else:
 				gradientYImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 2], centeredKernel)
@@ -84,6 +84,8 @@ def readDataset(positive_train_path, negative_train_path):
 	result = {"pos":[], "neg":[]}
 	positive_files = [f for f in os.listdir(positive_train_path) if isfile(join(positive_train_path, f))]
 	negative_files = [f for f in os.listdir(negative_train_path) if isfile(join(negative_train_path, f))]
+	positive_files = positive_files[0:1]
+	negative_files = negative_files[0:1]
 
 	# Just read one file
 	if len(sys.argv) == 2:
@@ -268,8 +270,8 @@ def train(dataset):
 
 def main():
 	dataset = readDataset(POS_DATASET_PATH, NEG_DATASET_PATH)
-	dataset["pos"] = dataset["pos"][0:1]
-	dataset["neg"] = dataset["neg"][0:1]
+	dataset["pos"] = dataset["pos"]
+	dataset["neg"] = dataset["neg"]
 	print("Read dataset of", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative images")
 	
 	svm_classifier = train(dataset)
