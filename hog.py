@@ -7,6 +7,7 @@ from os.path import isfile, join
 from PIL import Image
 from numpy import linalg as LA
 from sklearn import svm
+import time
 
 POS_DATASET_PATH="INRIAPerson/train_64x128_H96/pos"
 NEG_DATASET_PATH="INRIAPerson/train_64x128_H96/neg"
@@ -17,20 +18,20 @@ DETECTION_WINDOW=(128,64)
 I=0
 J=1
 
-def computeCenteredXGradient(grayscaleImage):
+def computeCenteredXGradient(grayscaleImage, detectionWindow = DETECTION_WINDOW):
 	height = grayscaleImage.shape[0]
 	width = grayscaleImage.shape[1]
-	gradientXImage = np.zeros(DETECTION_WINDOW, dtype=int)
+	gradientXImage = np.zeros(detectionWindow, dtype=int)
 	
 	centeredKernel = np.array([-1, 0, 1])
 	uncenteredKernel = np.array([-1, 1])
 	
-	start_height = int((height - DETECTION_WINDOW[I]) / 2)
-	end_height = start_height + DETECTION_WINDOW[I]
+	start_height = int((height - detectionWindow[I]) / 2)
+	end_height = start_height + detectionWindow[I]
 
 	for i in range(start_height, end_height):
-		start_width = int((width - DETECTION_WINDOW[J]) / 2)
-		end_width = start_width + DETECTION_WINDOW[J]
+		start_width = int((width - detectionWindow[J]) / 2)
+		end_width = start_width + detectionWindow[J]
 	
 		for j in range(start_width, end_width):
 			if j == start_width:
@@ -41,21 +42,21 @@ def computeCenteredXGradient(grayscaleImage):
 				gradientXImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 2], centeredKernel)
 	return gradientXImage
 
-def computeCenteredYGradient(grayscaleImage):
+def computeCenteredYGradient(grayscaleImage, detectionWindow = DETECTION_WINDOW):
 	grayscaleImage = np.transpose(grayscaleImage)
 	height = grayscaleImage.shape[0]
 	width = grayscaleImage.shape[1]
-	gradientYImage = np.zeros((DETECTION_WINDOW[J], DETECTION_WINDOW[I]), dtype=int)
+	gradientYImage = np.zeros((detectionWindow[J], detectionWindow[I]), dtype=int)
 
 	centeredKernel = np.array([-1, 0, 1])
 	uncenteredKernel = np.array([-1, 1])
 
-	start_height = int((height - DETECTION_WINDOW[J]) / 2)
-	end_height = start_height + DETECTION_WINDOW[J];
+	start_height = int((height - detectionWindow[J]) / 2)
+	end_height = start_height + detectionWindow[J];
 
 	for i in range(start_height, end_height):
-		start_width = int((width - DETECTION_WINDOW[I]) / 2)
-		end_width = start_width + DETECTION_WINDOW[I]
+		start_width = int((width - detectionWindow[I]) / 2)
+		end_width = start_width + detectionWindow[I]
 	
 		for j in range(start_width, end_width):
 			if j == start_width:
@@ -67,7 +68,10 @@ def computeCenteredYGradient(grayscaleImage):
 	gradientYImage = np.transpose(gradientYImage)
 	return gradientYImage
 
-def computeCenteredGradient(gradientXImage, gradientYImage):
+def computeCenteredGradient(grayscaleImage, detectionWindow = DETECTION_WINDOW):
+	gradientXImage = computeCenteredXGradient(grayscaleImage, detectionWindow)
+	gradientYImage = computeCenteredYGradient(grayscaleImage, detectionWindow)
+
 	height = gradientXImage.shape[0]
 	width = gradientXImage.shape[1]
 	gradientImage = [[(0, 0) for i in range(width)] for j in range(height)]
@@ -133,7 +137,7 @@ def createOrientationBinning(num_bins, cell_indexes, gradient_values):
 	return bins
 
 # Output: a matrix of each Histogram cell of shape num_cells_i, num_cells_j
-def getOrientationBinMatrix(gradientImage):
+def getOrientationBinMatrix(gradientImage, integralHistogram = np.array([])):
 	cell_indexes = getCellIndexes(gradientImage, CELL_SIZE)
 	#print("Number of cells of test image:", len(cell_indexes))
 
@@ -141,10 +145,16 @@ def getOrientationBinMatrix(gradientImage):
 	num_cells_j = int(gradientImage.shape[J] / CELL_SIZE[J])
 	cell_matrix = [[0 for i in range(num_cells_j)] for j in range(num_cells_i)]
 	cell_index = 0
-	for i in range(num_cells_i):
-		for j in range(num_cells_j):
-			cell_matrix[i][j] = createOrientationBinning(NUM_BINS, cell_indexes[cell_index], gradientImage)
-			cell_index += 1
+	if integralHistogram.shape[0] == 0:
+		for i in range(num_cells_i):
+			for j in range(num_cells_j):
+				cell_matrix[i][j] = createOrientationBinning(NUM_BINS, cell_indexes[cell_index], gradientImage)
+				cell_index += 1
+	else:
+		for i in range(num_cells_i):
+			for j in range(num_cells_j):
+				cell_matrix[i][j] = getRectangleIntegralHistogram(integralHistogram, cell_indexes[cell_index])
+				cell_index += 1
 	return cell_matrix
 
 def getHogDescriptor(cells_matrix):
@@ -206,8 +216,6 @@ def get_hard_negatives(svm, negative_set):
 	print("Getting hard features")
 	for image in negative_set:
 		subWindowsIndexes = getSubWindows(image)
-		for i in subWindowsIndexes:
-			print(i, '\n')
 		# Create sub image
 		for index in subWindowsIndexes:
 			top_left = index[0]
@@ -222,17 +230,47 @@ def get_hard_negatives(svm, negative_set):
 	svm_result = svm.predict(descriptors)
 	print(len(svm_result))
 
-#def getIntegralHistogram(image):
+def getIntegralHistogram(gradientImage):
+	height = gradientImage.shape[0]
+	width = gradientImage.shape[1]
 
+	emptyBin = np.zeros(NUM_BINS)
+
+	integralHistogram = [[emptyBin for i in range(width + 1)] for j in range(height + 1)]
+	for i in range(1, height + 1):
+		for j in range(1, width + 1):
+			(angle, magnitude) = gradientImage[i-1][j-1]
+			bin_index = int(angle / (360 / NUM_BINS))
+			integralHistogram[i][j] = -integralHistogram[i-1][j-1] + integralHistogram[i][j-1] + integralHistogram[i-1][j]
+			integralHistogram[i][j][bin_index] += magnitude
+
+	return np.array(integralHistogram)
+
+def getRectangleIntegralHistogram(integralHistogram, cell_indexes):
+	# topLeft si bottomRight elements are inside the rectangle
+	topLeft = (cell_indexes[0][0] + 1, cell_indexes[0][1] + 1)
+	bottomRight = cell_indexes[1]
+	topRight = [topLeft[0], bottomRight[1]]
+	bottomLeft = [bottomRight[0], topLeft[1]]
+	rectangleBin = integralHistogram[bottomRight[0]][bottomRight[1]] + integralHistogram[topLeft[0] - 1][topLeft[1] - 1] - \
+		integralHistogram[topRight[0] - 1][topRight[1]] - integralHistogram[bottomLeft[0]][bottomLeft[1] - 1]
+	return rectangleBin
 
 def train_image(image):
 	height = image.shape[0]
 	width = image.shape[1]
-	gradientXImage = computeCenteredXGradient(image)
-	gradientYImage = computeCenteredYGradient(image)
-	gradientImage = computeCenteredGradient(gradientXImage, gradientYImage)
+	
+	gradientImage = computeCenteredGradient(image)
 
 	cells_matrix = getOrientationBinMatrix(gradientImage)
+	hog_descriptor = getHogDescriptor(cells_matrix)
+
+	return hog_descriptor
+
+def getHogFromIntegralImage(gradientImage, integralHistogram):
+	integralHistogram = getIntegralHistogram(gradientImage)
+	
+	cells_matrix = getOrientationBinMatrix(gradientImage, integralHistogram)
 	hog_descriptor = getHogDescriptor(cells_matrix)
 	return hog_descriptor
 
