@@ -84,8 +84,8 @@ def readDataset(positive_train_path, negative_train_path):
 	result = {"pos":[], "neg":[]}
 	positive_files = [f for f in os.listdir(positive_train_path) if isfile(join(positive_train_path, f))]
 	negative_files = [f for f in os.listdir(negative_train_path) if isfile(join(negative_train_path, f))]
-	positive_files = positive_files[0:1]
-	negative_files = negative_files[0:1]
+	positive_files = positive_files[0:100]
+	negative_files = negative_files[0:100]
 
 	# Just read one file
 	if len(sys.argv) == 2:
@@ -206,8 +206,10 @@ def get_hard_negatives(svm, negative_set):
 	print("Getting hard features")
 	for image in negative_set:
 		subWindowsIndexes = getSubWindows(image)
+		print(len(subWindowsIndexes))
 		# Create sub image
 		for index in subWindowsIndexes:
+			print(index)
 			top_left = index[0]
 			bottom_right = index[1]
 			sub_image = np.array(image[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]])
@@ -216,10 +218,11 @@ def get_hard_negatives(svm, negative_set):
 			descriptors.append(descriptor)
 
 	print("Testing on svm")
-	print(len(descriptors))
 	svm_result = svm.predict(descriptors)
-	print(len(svm_result))
-
+	for i in range(len(svm_result)):
+		if svm_result[i] == "pos":
+			hard_negatives.append(descriptors[i])
+	return hard_negatives
 
 def train_image(image):
 	height = image.shape[0]
@@ -231,6 +234,15 @@ def train_image(image):
 	cells_matrix = getOrientationBinMatrix(gradientImage)
 	hog_descriptor = getHogDescriptor(cells_matrix)
 	return hog_descriptor
+
+def test_on_training_set(svm, data, classes):
+	good = 0
+	result = svm.predict(data)
+	assert(len(result) == len(classes))
+	for i in range(len(result)):
+		if result[i] == classes[i]:
+			good += 1
+	print("Accuracy on training set:", good / len(result))
 
 def train(dataset):
 	data = []
@@ -244,9 +256,12 @@ def train(dataset):
 		classes.append("pos")
 
 	print("Getting descriptor for negative images")
+	i = 0
 	for image in dataset["neg"]:
+		i += 1
 		descriptor = train_image(image)
 		# Get random windows in each negative image for training.
+		print(i, image.shape)
 		subWindowsIndexes = getSubWindows(image)
 		subWindowsIndexes = random.sample(subWindowsIndexes, random_negative_windows_count)
 		for index in subWindowsIndexes:
@@ -263,7 +278,8 @@ def train(dataset):
 		len(dataset["neg"]) * random_negative_windows_count, "negatives")
 	rbf_svc = svm.SVC(kernel='rbf', gamma=0.7, C=C).fit(data, classes)
 
-	hard_negatives = get_hard_negatives(rbf_svc, dataset["neg"])
+	test_on_training_set(rbf_svc, data, classes)
+	#hard_negatives = get_hard_negatives(rbf_svc, dataset["neg"])
 	
 	#return rbf_svc
 	return 0
