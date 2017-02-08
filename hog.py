@@ -57,7 +57,8 @@ def readDataset(path):
 	result = []
 	for root, subdirs, files in os.walk(path):
 		for file in files:
-			paths.append(path+"/"+file)
+			if not len(sys.argv) == 2 or (len(sys.argv) == 2 and sys.argv[1] == file):
+				paths.append(path+"/"+file)
 		break
 
 	for image_path in paths:
@@ -111,7 +112,7 @@ def getOrientationBinMatrix(gradientImage):
 			cell_index += 1
 	return cell_matrix
 
-def getHog(cells_matrix):
+def getHogDescriptor(cells_matrix):
 	num_cells_i = len(cells_matrix)
 	num_cells_j = len(cells_matrix[0])
 	num_blocks_i = num_cells_i - CELLS_PER_BLOCK[I] + 1
@@ -144,17 +145,14 @@ def train_image(image):
 	gradientImage = computeCenteredGradient(gradientXImage, gradientYImage)
 
 	cells_matrix = getOrientationBinMatrix(gradientImage)
-	hog = getHog(cells_matrix)
-	print(len(hog))
+	hog_descriptor = getHogDescriptor(cells_matrix)
 
 def train(paths, dataset):
 	i=0
 	for i in range(len(dataset)):
 		image = dataset[i]
 		path = paths[i]
-		#print("Image:", path)
 		train_image(image)
-		break
 
 def main():
 	(paths, images) = readDataset(DATASET_PATH)
