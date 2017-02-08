@@ -5,10 +5,14 @@ import numpy as np
 import sys
 import matplotlib.pyplot as plt
 
+from sklearn import svm
+
 DATASET_PATH="INRIAPerson/test_64x128_H96/pos"
 CELL_SIZE=(8, 8) # 8x8 shape
 CELLS_PER_BLOCK=(2, 2) # 2x2 cells in a block
 NUM_BINS=18 # 18 bins over 360 degrees
+POS = 1
+NEG = 0
 
 def computeCenteredXGradient(grayscaleImage):
 	height = grayscaleImage.shape[0]
@@ -97,7 +101,7 @@ def createOrientationBinning(image, num_bins, cell_indexes, gradient_values):
 	return bins
 
 def train(dataset):
-	image = dataset[0]
+	image = grayScaleImage(dataset[0])
 
 	height = image.shape[0]
 	width = image.shape[1]
@@ -111,11 +115,21 @@ def train(dataset):
 	#print(getCellIndexes(test_image, CELL_SIZE))
 	print(createOrientationBinning(image, NUM_BINS, cell_indexes[0], gradientImage))
 
+def trainSVM(hogMap, C):
+	negativeExamples = hogMap[NEG]
+	positiveExamples = hogMap[POS]
+	trainingExamples = np.concatenate((negativeExamples, positiveExamples))
+	classExamples = np.concatenate((np.zeros(len(negativeExamples)), np.ones(len(positiveExamples)))) 
+	rbf_svc = svm.SVC(kernel='rbf', gamma=0.7, C=C).fit(trainingExamples, classExamples)
+
 def main():
 	images = readDataset(DATASET_PATH)
 	print("Read dataset of ", len(images), "images")
 	#plotDataset(images)
 	train(images)
+	hogMap = {0: [1,2,3], 1: [4,5,6,7]}
+	C = 0.01
+	trainSVM(hogMap)
 
 if __name__ == "__main__":
 	main()
