@@ -3,18 +3,24 @@ import numpy as np
 import sys
 import matplotlib.pyplot as plt
 import random
+import datetime
 from os.path import isfile, join
 from PIL import Image
 from numpy import linalg as LA
 from sklearn import svm
 import time
+from sklearn.externals import joblib
 
-POS_DATASET_PATH="INRIAPerson/train_64x128_H96/pos"
-NEG_DATASET_PATH="INRIAPerson/train_64x128_H96/neg"
+TRAIN_POS_PATH="INRIAPerson/train_64x128_H96/pos"
+TRAIN_NEG_PATH="INRIAPerson/train_64x128_H96/neg"
+TEST_POS_PATH="INRIAPerson/test_64x128_H96/neg"
+TEST_NEG_PATH="INRIAPerson/test_64x128_H96/neg"
 CELL_SIZE=(8, 8) # 8x8 shape
 CELLS_PER_BLOCK=(2, 2) # 2x2 cells in a block
 NUM_BINS=18 # 18 bins over 360 degrees
 DETECTION_WINDOW=(128,64)
+EXPORT_FILENAME="svm.pkl"
+EXPORT_FILENAME_HARD="svm_hard.pkl"
 I=0
 J=1
 
@@ -88,13 +94,8 @@ def readDataset(positive_train_path, negative_train_path):
 	result = {"pos":[], "neg":[]}
 	positive_files = [f for f in os.listdir(positive_train_path) if isfile(join(positive_train_path, f))]
 	negative_files = [f for f in os.listdir(negative_train_path) if isfile(join(negative_train_path, f))]
-	positive_files = positive_files[0:1]
-	negative_files = negative_files[0:1]
-
-	# Just read one file
-	if len(sys.argv) == 2:
-		positive_files = list(filter(lambda x : x == sys.argv[1], positive_files))
-		negative_files = list(filter(lambda x : x == sys.argv[1], negative_files))
+	positive_files = positive_files #[0:100]
+	negative_files = negative_files #[0:10]
 
 	for image_name in positive_files:
 		image_path = positive_train_path + os.sep + image_name
@@ -214,8 +215,13 @@ def get_hard_negatives(svm, negative_set):
 	hard_negatives = []
 	descriptors = []
 	print("Getting hard features")
+	i = 0
 	for image in negative_set:
+		print(i, image.shape)
+		i += 1
 		subWindowsIndexes = getSubWindows(image)
+		percentIndexes = 0.1
+		subWindowsIndexes = random.sample(subWindowsIndexes, int(len(subWindowsIndexes) * percentIndexes))
 		# Create sub image
 		for index in subWindowsIndexes:
 			top_left = index[0]
@@ -225,10 +231,13 @@ def get_hard_negatives(svm, negative_set):
 			descriptor = train_image(sub_image)
 			descriptors.append(descriptor)
 
-	print("Testing on svm")
-	print(len(descriptors))
+	print("Testing on ", len(descriptors), "negative inputs")
 	svm_result = svm.predict(descriptors)
-	print(len(svm_result))
+	print("Result size:", len(svm_result))
+	for i in range(len(svm_result)):
+		if svm_result[i] == "pos":
+			hard_negatives.append(descriptors[i])
+	return hard_negatives
 
 def getIntegralHistogram(gradientImage):
 	height = gradientImage.shape[0]
@@ -274,11 +283,21 @@ def getHogFromIntegralImage(gradientImage, integralHistogram):
 	hog_descriptor = getHogDescriptor(cells_matrix)
 	return hog_descriptor
 
-def train(dataset):
+def svm_classify(svm, data, classes, message="RBF"):
+	good = 0
+	result = svm.predict(data)
+	assert(len(result) == len(classes))
+	for i in range(len(result)):
+		if result[i] == classes[i]:
+			good += 1
+	print("[", message, "] Accuracy on training set: ", good / len(result), sep="")
+
+def prepare_data_for_svm(dataset, random_negative_windows_count=10):
 	data = []
 	classes = []
-	random_negative_windows_count = 10
 	
+	print("Preparing descriptors for", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative")
+
 	print("Getting descriptor for positive images")
 	for image in dataset["pos"]:
 		descriptor = train_image(image)
@@ -286,9 +305,12 @@ def train(dataset):
 		classes.append("pos")
 
 	print("Getting descriptor for negative images")
+	i = 0
 	for image in dataset["neg"]:
+		i += 1
 		descriptor = train_image(image)
 		# Get random windows in each negative image for training.
+		print(i, image.shape)
 		subWindowsIndexes = getSubWindows(image)
 		subWindowsIndexes = random.sample(subWindowsIndexes, random_negative_windows_count)
 		for index in subWindowsIndexes:
@@ -298,26 +320,57 @@ def train(dataset):
 			descriptor = train_image(sub_image)
 			data.append(descriptor)
 			classes.append("neg")
+	return (data, classes)
 
+def train(dataset):
+	(data, classes) = prepare_data_for_svm(dataset)
 	# Train initial SVM
 	C = 1.0
 	print("Training initial SVM with", len(dataset["pos"]), "positives and", \
-		len(dataset["neg"]) * random_negative_windows_count, "negatives")
-	rbf_svc = svm.SVC(kernel='rbf', gamma=0.7, C=C).fit(data, classes)
+		len(data) - len(dataset["pos"]), "negatives")
 
+	# Testing all 4 types of SVMs and printing the accuracy by testing on the training set
+	rbf_svc = svm.SVC(kernel="rbf", gamma=0.7, C=C).fit(data, classes)
+	svm_classify(rbf_svc, data, classes, "RBF")
+	linear_svc = svm.SVC(kernel="linear").fit(data, classes)
+	svm_classify(linear_svc, data, classes, "Linear")
+	polynomial_svc = svm.SVC(kernel="poly").fit(data, classes)
+	svm_classify(polynomial_svc, data, classes, "Polynomial")
+	sigmoid_svc = svm.SVC(kernel="sigmoid").fit(data, classes)
+	svm_classify(sigmoid_svc, data, classes, "Sigmoid")
+
+	# Export the trained RBF SVM to current.
+	print("Exporting SVM to", EXPORT_FILENAME)
+	joblib.dump(rbf_svc, EXPORT_FILENAME) 
+
+	# Get hard negatives and add them to the negative training set and then re-train the SVM with them as well.
 	hard_negatives = get_hard_negatives(rbf_svc, dataset["neg"])
-	
-	#return rbf_svc
-	return 0
+	print("Returned", len(hard_negatives), "hard negatives. Adding them to negative dataset")	
+	data.extend(hard_negatives)
+	classes.extend(["neg"] * len(hard_negatives))
+	rbf_svc = svm.SVC(kernel='rbf', gamma=0.7, C=C).fit(data, classes)
+	test_on_training_set("RBF", rbf_svc, data, classes)
+
+	# Export the re-trained SVM with hard negatives.
+	print("Exporting SVM to", EXPORT_FILENAME_HARD)
+	joblib.dump(rbf_svc, EXPORT_FILENAME_HARD)
+
+	return rbf_svc
 
 def main():
-	dataset = readDataset(POS_DATASET_PATH, NEG_DATASET_PATH)
-	dataset["pos"] = dataset["pos"]
-	dataset["neg"] = dataset["neg"]
-	print("Read dataset of", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative images")
-	
-	svm_classifier = train(dataset)
+	dataset = readDataset(TRAIN_POS_PATH, TRAIN_NEG_PATH)
+	print("Read test dataset of", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative images")
 
+	if len(sys.argv) == 2:
+		svm_classifier = joblib.load(sys.argv[1])
+		print("SVM classifier imported from:", sys.argv[1])
+	else:
+		svm_classifier = train(dataset)
+
+	# Read the testing dataset and run it.
+	dataset = readDataset(TEST_POS_PATH, TEST_NEG_PATH)
+	(data, classes) = prepare_data_for_svm(dataset)
+	svm_classify(svm_classifier, data, classes)
 
 if __name__ == "__main__":
 	main()
