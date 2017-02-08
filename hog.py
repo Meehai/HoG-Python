@@ -1,16 +1,20 @@
 import os
-from Mihlib import *
-from PIL import Image
 import numpy as np
-from numpy import linalg as LA
 import sys
 import matplotlib.pyplot as plt
+from os.path import isfile, join
+from PIL import Image
+from numpy import linalg as LA
+from sklearn import svm
 
-DATASET_PATH="INRIAPerson/train_64x128_H96/pos"
+POS_DATASET_PATH="INRIAPerson/train_64x128_H96/pos"
+NEG_DATASET_PATH="INRIAPerson/train_64x128_H96/neg"
 CELL_SIZE=(8, 8) # 8x8 shape
 CELLS_PER_BLOCK=(2, 2) # 2x2 cells in a block
 NUM_BINS=18 # 18 bins over 360 degrees
 DETECTION_WINDOW=(128,64)
+I=0
+J=1
 
 def computeCenteredXGradient(grayscaleImage):
 	height = grayscaleImage.shape[0]
@@ -52,20 +56,25 @@ def computeCenteredGradient(gradientXImage, gradientYImage):
 			gradientImage[i][j] = (orientation, magnitude)
 	return np.array(gradientImage)
 
-def readDataset(path):
-	paths = []
-	result = []
-	for root, subdirs, files in os.walk(path):
-		for file in files:
-			if not len(sys.argv) == 2 or (len(sys.argv) == 2 and sys.argv[1] == file):
-				paths.append(path+"/"+file)
-		break
+def readDataset(positive_train_path, negative_train_path):
+	result = {"pos":[], "neg":[]}
+	positive_files = [f for f in os.listdir(positive_train_path) if isfile(join(positive_train_path, f))]
+	negative_files = [f for f in os.listdir(negative_train_path) if isfile(join(negative_train_path, f))]
 
-	for image_path in paths:
-		image = Image.open(image_path).convert("L")
-		image = np.array(image)
-		result.append(image)
-	return (paths, result)
+	# Just read one file
+	if len(sys.argv) == 2:
+		positive_files = list(filter(lambda x : x == sys.argv[1], positive_files))
+		negative_files = list(filter(lambda x : x == sys.argv[1], negative_files))
+
+	for image_name in positive_files:
+		image_path = positive_train_path + os.sep + image_name
+		image = np.array(Image.open(image_path).convert("L"))
+		result["pos"].append(image)
+	for image_name in negative_files:
+		image_path = negative_train_path + os.sep + image_name
+		image = np.array(Image.open(image_path).convert("L"))
+		result["neg"].append(image)
+	return result
 
 def plotDataset(images):
 	# for image in images:
@@ -137,6 +146,14 @@ def getHogDescriptor(cells_matrix):
 			hog_index += len(block)
 	return hog
 
+def getFeaturesNumber():
+	cells_per_detection_window = (int(DETECTION_WINDOW[I]/CELL_SIZE[I]), int(DETECTION_WINDOW[J]/CELL_SIZE[J]))
+	blocks_per_detection_window = (cells_per_detection_window[I] - CELLS_PER_BLOCK[I] + 1, \
+		cells_per_detection_window[J] - CELLS_PER_BLOCK[J] + 1)
+	overlapping_cells_per_window = blocks_per_detection_window[I] * blocks_per_detection_window[J] * \
+		CELLS_PER_BLOCK[I] * CELLS_PER_BLOCK[J]
+	return overlapping_cells_per_window * NUM_BINS
+
 def train_image(image):
 	height = image.shape[0]
 	width = image.shape[1]
@@ -146,19 +163,42 @@ def train_image(image):
 
 	cells_matrix = getOrientationBinMatrix(gradientImage)
 	hog_descriptor = getHogDescriptor(cells_matrix)
+	return hog_descriptor
 
-def train(paths, dataset):
-	i=0
-	for i in range(len(dataset)):
-		image = dataset[i]
-		path = paths[i]
-		train_image(image)
+def train(dataset):
+	data_count = len(dataset["pos"]) + len(dataset["neg"])
+	data = np.zeros( (data_count, getFeaturesNumber()) )
+	classes = np.zeros(data_count)
+	
+	image_index = 0
+	print("Getting descriptor for positive images")
+	for image in dataset["pos"]:
+		descriptor = train_image(image)
+		data[image_index] = descriptor
+		classes[image_index] = 1 # POS
+		image_index += 1
+
+	print("Getting descriptor for negative images")
+	for image in dataset["neg"]:
+		descriptor = train_image(image)
+		data[image_index] = descriptor
+		classes[image_index] = 0 # NEG
+		image_index += 1
+
+	# Train SVM
+	C = 1.0
+	print("Training SVM")
+	rbf_svc = svm.SVC(kernel='rbf', gamma=0.7, C=C).fit(data, classes)
+	return rbf_svc
 
 def main():
-	(paths, images) = readDataset(DATASET_PATH)
-	print("Read dataset of", len(images), "images")
-	#plotDataset(images)
-	train(paths, images)
+	dataset = readDataset(POS_DATASET_PATH, NEG_DATASET_PATH)
+	dataset["pos"] = dataset["pos"][0:100]
+	dataset["neg"] = dataset["neg"][0:100]
+	print("Read dataset of", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative images")
+	
+	svm_classifier = train(dataset)
+
 
 if __name__ == "__main__":
 	main()
