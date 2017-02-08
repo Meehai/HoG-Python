@@ -184,11 +184,11 @@ def getFeaturesNumber():
 def getSubWindows(image, subWindowSize = DETECTION_WINDOW, shift = 8):
 	height = image.shape[0]
 	width = image.shape[1]
-	heightRange = int((height - subWindowSize[0]) / shift) + 1
-	widthRange = int((width - subWindowSize[1]) / shift) + 1
+	heightRange = int(np.ceil((height - subWindowSize[0] + 1) / shift))
+	widthRange = int(np.ceil((width - subWindowSize[1] + 1) / shift))
 	subWindows = [[(0, 0) for i in range(2)] for j in range(widthRange * heightRange)]
-	for i in range(0, height - subWindowSize[0] + shift, shift):
-		for j in range(0, width - subWindowSize[1] + shift, shift):
+	for i in range(0, height - subWindowSize[0] + 1, shift):
+		for j in range(0, width - subWindowSize[1] + 1, shift):
 			topLeft = (i, j)
 			bottomRight = (i + subWindowSize[0], j + subWindowSize[1])
 			subWindowsRow = int(i / shift)
@@ -206,6 +206,8 @@ def get_hard_negatives(svm, negative_set):
 	print("Getting hard features")
 	for image in negative_set:
 		subWindowsIndexes = getSubWindows(image)
+		for i in subWindowsIndexes:
+			print(i, '\n')
 		# Create sub image
 		for index in subWindowsIndexes:
 			top_left = index[0]
@@ -219,6 +221,8 @@ def get_hard_negatives(svm, negative_set):
 	print(len(descriptors))
 	svm_result = svm.predict(descriptors)
 	print(len(svm_result))
+
+#def getIntegralHistogram(image):
 
 
 def train_image(image):
