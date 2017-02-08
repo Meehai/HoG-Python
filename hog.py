@@ -2,6 +2,7 @@ import os
 import numpy as np
 import sys
 import matplotlib.pyplot as plt
+import random
 from os.path import isfile, join
 from PIL import Image
 from numpy import linalg as LA
@@ -20,12 +21,24 @@ def computeCenteredXGradient(grayscaleImage):
 	height = grayscaleImage.shape[0]
 	width = grayscaleImage.shape[1]
 	gradientXImage = np.zeros(DETECTION_WINDOW, dtype=int)
+	
 	centeredKernel = np.array([-1, 0, 1])
+	uncenteredKernel = np.array([-1, 1])
+	
 	start_height = int((height - DETECTION_WINDOW[I]) / 2)
-	for i in range( start_height, start_height + DETECTION_WINDOW[I]):
+	end_height = start_height + DETECTION_WINDOW[I]
+
+	for i in range(start_height, end_height):
 		start_width = int((width - DETECTION_WINDOW[J]) / 2)
-		for j in range(start_width, start_width + DETECTION_WINDOW[J]):
-			gradientXImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 2], centeredKernel)
+		end_width = start_width + DETECTION_WINDOW[J]
+	
+		for j in range(start_width, end_width):
+			if j == start_width:
+				gradientXImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j: j + 2], uncenteredKernel)
+			elif j == end_width:
+				gradientXImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 1], uncenteredKernel)
+			else:
+				gradientXImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 2], centeredKernel)
 	return gradientXImage
 
 def computeCenteredYGradient(grayscaleImage):
@@ -33,12 +46,24 @@ def computeCenteredYGradient(grayscaleImage):
 	height = grayscaleImage.shape[0]
 	width = grayscaleImage.shape[1]
 	gradientYImage = np.zeros((DETECTION_WINDOW[J], DETECTION_WINDOW[I]), dtype=int)
+
 	centeredKernel = np.array([-1, 0, 1])
+	uncenteredKernel = np.array([-1, 1])
+
 	start_height = int((height - DETECTION_WINDOW[J]) / 2)
-	for i in range( start_height, start_height + DETECTION_WINDOW[J]):
+	end_height = start_height + DETECTION_WINDOW[J];
+
+	for i in range(start_height, end_height):
 		start_width = int((width - DETECTION_WINDOW[I]) / 2)
-		for j in range(start_width, start_width + DETECTION_WINDOW[I]):
-			gradientYImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 2], centeredKernel)
+		end_width = start_width + DETECTION_WINDOW[I]
+	
+		for j in range(start_width, end_width):
+			if j == start_width:
+				gradientYImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j: j + 2], uncenteredKernel)
+			elif j == end_width:
+				gradientYImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 1], uncenteredKernel)
+			else:
+				gradientYImage[i-start_height][j-start_width] = np.dot(grayscaleImage[i][j - 1: j + 2], centeredKernel)
 	gradientYImage = np.transpose(gradientYImage)
 	return gradientYImage
 
@@ -153,6 +178,7 @@ def getFeaturesNumber():
 		CELLS_PER_BLOCK[I] * CELLS_PER_BLOCK[J]
 	return overlapping_cells_per_window * NUM_BINS
 
+# Returns A list of indexes of windowses from the initial image, given a window size and shift value
 def getSubWindows(image, subWindowSize = DETECTION_WINDOW, shift = 8):
 	height = image.shape[0]
 	width = image.shape[1]
@@ -169,6 +195,30 @@ def getSubWindows(image, subWindowSize = DETECTION_WINDOW, shift = 8):
 			subWindows[subWindowsRow * widthRange + subWindowsCol][1] = bottomRight
 	return subWindows
 
+# Given a svm classifier and a set of negative examples, construct windows in each negative example and predict the
+# result of the classifier on those. The ones that will give us a positive class will be added to the hard negatives
+# list which is returned
+def get_hard_negatives(svm, negative_set):
+	hard_negatives = []
+	descriptors = []
+	print("Getting hard features")
+	for image in negative_set:
+		subWindowsIndexes = getSubWindows(image)
+		# Create sub image
+		for index in subWindowsIndexes:
+			top_left = index[0]
+			bottom_right = index[1]
+			sub_image = np.array(image[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]])
+			# Save the descriptor of the sub image.
+			descriptor = train_image(sub_image)
+			descriptors.append(descriptor)
+
+	print("Testing on svm")
+	print(len(descriptors))
+	svm_result = svm.predict(descriptors)
+	print(len(svm_result))
+
+
 def train_image(image):
 	height = image.shape[0]
 	width = image.shape[1]
@@ -181,39 +231,45 @@ def train_image(image):
 	return hog_descriptor
 
 def train(dataset):
-	data_count = len(dataset["pos"]) + len(dataset["neg"])
-	data = np.zeros( (data_count, getFeaturesNumber()) )
-	classes = np.zeros(data_count)
+	data = []
+	classes = []
+	random_negative_windows_count = 10
 	
-	image_index = 0
 	print("Getting descriptor for positive images")
 	for image in dataset["pos"]:
 		descriptor = train_image(image)
-		data[image_index] = descriptor
-		classes[image_index] = 1 # POS
-		image_index += 1
+		data.append(descriptor)
+		classes.append("pos")
 
 	print("Getting descriptor for negative images")
 	for image in dataset["neg"]:
 		descriptor = train_image(image)
-		data[image_index] = descriptor
-		classes[image_index] = 0 # NEG
-		image_index += 1
+		# Get random windows in each negative image for training.
+		subWindowsIndexes = getSubWindows(image)
+		subWindowsIndexes = random.sample(subWindowsIndexes, random_negative_windows_count)
+		for index in subWindowsIndexes:
+			top_left = index[0]
+			bottom_right = index[1]
+			sub_image = np.array(image[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]])
+			descriptor = train_image(sub_image)
+			data.append(descriptor)
+			classes.append("neg")
 
-	subWindows = getSubWindows(image)
-	for i in range(len(subWindows)):
-		print(subWindows[i], '\n')
-	# Train SVM
-	#C = 1.0
-	#print("Training SVM")
-	#rbf_svc = svm.SVC(kernel='rbf', gamma=0.7, C=C).fit(data, classes)
+	# Train initial SVM
+	C = 1.0
+	print("Training initial SVM with", len(dataset["pos"]), "positives and", \
+		len(dataset["neg"]) * random_negative_windows_count, "negatives")
+	rbf_svc = svm.SVC(kernel='rbf', gamma=0.7, C=C).fit(data, classes)
+
+	hard_negatives = get_hard_negatives(rbf_svc, dataset["neg"])
+	
 	#return rbf_svc
 	return 0
 
 def main():
 	dataset = readDataset(POS_DATASET_PATH, NEG_DATASET_PATH)
-	dataset["pos"] = dataset["pos"][0:100]
-	dataset["neg"] = dataset["neg"][0:100]
+	dataset["pos"] = dataset["pos"][0:1]
+	dataset["neg"] = dataset["neg"][0:1]
 	print("Read dataset of", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative images")
 	
 	svm_classifier = train(dataset)
