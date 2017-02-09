@@ -19,8 +19,8 @@ CELL_SIZE=(8, 8) # 8x8 shape
 CELLS_PER_BLOCK=(2, 2) # 2x2 cells in a block
 NUM_BINS=18 # 18 bins over 360 degrees
 DETECTION_WINDOW=(128,64)
-EXPORT_FILENAME="svm.pkl"
-EXPORT_FILENAME_HARD="svm_hard.pkl"
+EXPORT_FILENAME="_svm.pkl"
+EXPORT_FILENAME_HARD="_svm_hard.pkl"
 I=0
 J=1
 
@@ -94,7 +94,7 @@ def readDataset(positive_train_path, negative_train_path):
 	result = {"pos":[], "neg":[]}
 	positive_files = [f for f in os.listdir(positive_train_path) if isfile(join(positive_train_path, f))]
 	negative_files = [f for f in os.listdir(negative_train_path) if isfile(join(negative_train_path, f))]
-	positive_files = positive_files[0:1]
+	positive_files = positive_files
 	negative_files = negative_files[0:2]
 
 	for image_name in positive_files:
@@ -297,52 +297,43 @@ def svm_classify(svm, data, classes, message="RBF"):
 				tn += 1
 
 	acc = (tp + tn) / (tp + fp + fn + tn)
-	print("[", message, "] tp =  ", tp, " fp = ", fp, " fn = ", fn, " tn = \n", tn, sep="")
+	print("[", message, "] tp =  ", tp, " fp = ", fp, " fn = ", fn, " tn = ", tn, sep="")
 	print("[", message, "] Accuracy on training set: ", acc, sep="")
 
 def prepare_data_for_svm(dataset, random_negative_windows_count=10, useIntegralImage = False):
 	data = []
 	classes = []
 	
-	print("Preparing descriptors for", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative")
-
-	print("Getting descriptor for positive images")
-	for image in dataset["pos"]:
-		descriptor = train_image(image)
-		data.append(descriptor)
-		classes.append("pos")
-
-	print("Getting descriptor for negative images")
-
-	gradientImage = None
-	integralHistogram = None
-
-	i = 0
-	for image in dataset["neg"]:
-		i += 1
-		# Get random windows in each negative image for training.
-		print(i, image.shape)
-		if useIntegralImage:
-			gradientImage = computeCenteredGradient(image, (image.shape[0], image.shape[1]))
-			integralHistogram = getIntegralHistogram(gradientImage)
-
-		subWindowsIndexes = getSubWindows(image)
-		if random_negative_windows_count != None:
-			subWindowsIndexes = random.sample(subWindowsIndexes, random_negative_windows_count)
-		for index in subWindowsIndexes:
-			top_left = index[0]
-			bottom_right = index[1]
-			sub_image = np.array(image[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]])
-
-			descriptor = None
+	print("Preparing descriptors for", len(dataset["pos"]), "positive and", len(dataset["neg"]), "negative images")
+	for key in dataset:
+		print("Getting descriptors for", key, "images")
+		i = 0
+		for image in dataset[key]:
+			i += 1
+			# Get random windows in each negative image for training.
+			if i % 100 == 0:
+				print(i, key, image.shape)
 			if useIntegralImage:
-				cells_matrix = getOrientationBinMatrix(gradientImage, integralHistogram, top_left, bottom_right)
-				descriptor = getHogDescriptor(cells_matrix)
-			else:
-				descriptor = train_image(sub_image)
-				
-			data.append(descriptor)
-			classes.append("neg")
+				gradientImage = computeCenteredGradient(image, (image.shape[0], image.shape[1]))
+				integralHistogram = getIntegralHistogram(gradientImage)
+
+			subWindowsIndexes = getSubWindows(image)
+			if random_negative_windows_count != None:
+				subWindowsIndexes = random.sample(subWindowsIndexes, random_negative_windows_count)
+			for index in subWindowsIndexes:
+				top_left = index[0]
+				bottom_right = index[1]
+				sub_image = np.array(image[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]])
+
+				descriptor = None
+				if useIntegralImage:
+					cells_matrix = getOrientationBinMatrix(gradientImage, integralHistogram, top_left, bottom_right)
+					descriptor = getHogDescriptor(cells_matrix)
+				else:
+					descriptor = train_image(sub_image)
+
+				data.append(descriptor)
+				classes.append(key)
 	return (data, classes)
 
 def train(dataset):
