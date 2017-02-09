@@ -13,7 +13,7 @@ from sklearn.externals import joblib
 
 TRAIN_POS_PATH="INRIAPerson/train_64x128_H96/pos"
 TRAIN_NEG_PATH="INRIAPerson/train_64x128_H96/neg"
-TEST_POS_PATH="INRIAPerson/test_64x128_H96/neg"
+TEST_POS_PATH="INRIAPerson/test_64x128_H96/pos"
 TEST_NEG_PATH="INRIAPerson/test_64x128_H96/neg"
 CELL_SIZE=(8, 8) # 8x8 shape
 CELLS_PER_BLOCK=(2, 2) # 2x2 cells in a block
@@ -106,11 +106,6 @@ def readDataset(positive_train_path, negative_train_path):
 		image = np.array(Image.open(image_path).convert("L"))
 		result["neg"].append(image)
 	return result
-
-def plotDataset(images):
-	# for image in images:
-	plot_image(images[0])
-	plt.show(block=True)
 
 # Given an image and a cell_size, return the indexes of top-left and bottom-right in the image 
 def getCellIndexes(image, cell_size):
@@ -372,23 +367,73 @@ def train(dataset):
 	joblib.dump(rbf_svc, EXPORT_FILENAME) 
 
 	# Get hard negatives and add them to the negative training set and then re-train the SVM with them as well.
-	hard_negatives = get_hard_negatives(rbf_svc, dataset["neg"])
-	print(len(hard_negatives))
+	#hard_negatives = get_hard_negatives(rbf_svc, dataset["neg"])
+	#print(len(hard_negatives))
 #	print("Returned", len(hard_negatives), "hard negatives. Adding them to negative dataset")	
 #	data.extend(hard_negatives)
 #	classes.extend(["neg"] * len(hard_negatives))
 #	rbf_svc = svm.SVC(kernel='rbf', gamma=0.7, C=C).fit(data, classes)
-	test_on_training_set("RBF", rbf_svc, data, classes)
+	#svm_classify("RBF", rbf_svc, data, classes)
 
 	# Export the re-trained SVM with hard negatives.
-	print("Exporting SVM to", EXPORT_FILENAME_HARD)
-	joblib.dump(rbf_svc, EXPORT_FILENAME_HARD)
+	#print("Exporting SVM to", EXPORT_FILENAME_HARD)
+	#joblib.dump(rbf_svc, EXPORT_FILENAME_HARD)
 
 	return rbf_svc
 
+# Adds a square, given (top_left, bottom_right)
+def addSquare(image, square, color=0):
+	pct1 = square[0]
+	pct2 = square[1]
+	(min_i, max_i) = (min(pct1[0], pct2[0]), max(pct1[0], pct2[0]))
+	for pixel_i in range(min_i, max_i + 1):
+		if pixel_i < 0 or pixel_i >= image.shape[I]:
+			continue
+		if pct1[1] >= 0 and pct1[1] < image.shape[J]:
+			image[pixel_i][pct1[1]] = color
+		if pct2[1] >= 0 and pct2[1] < image.shape[J]:
+			image[pixel_i][pct2[1]] = color
+	(min_j, max_j) = (min(pct1[1], pct2[1]), max(pct1[1], pct2[1]))
+	for pixel_j in range(min_j, max_j + 1):
+		if pixel_j < 0 or pixel_j >= image.shape[J]:
+			continue
+		if pct1[0] >= 0 and pct1[0] < image.shape[I]:
+			image[pct1[0]][pixel_j] = color
+		if pct2[0] >= 0 and pct2[0] < image.shape[I]:
+			image[pct2[0]][pixel_j] = color
+	return image
+
+# Input: Classifier and image
+# Output: For all windows, the accuracy. For correct, windows, box the window in the image.
+def test_and_show_image(svm, image, image_class):
+	print("Testing one image of shape:", image.shape, "Class:", image_class)
+	subWindowsIndexes = getSubWindows(image)
+	descriptors = []
+	print("Number of windows:", len(subWindowsIndexes))
+	for index in subWindowsIndexes:
+		top_left = index[0]
+		bottom_right = index[1]
+		sub_image = np.array(image[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]])
+		# Save the descriptor of the sub image.
+		descriptor = train_image(sub_image)
+		descriptors.append(descriptor)
+
+	classes = [image_class] * len(descriptors)
+	results = svm.predict(descriptors)
+
+	correct = 0
+	for i in range(len(results)):
+		result = results[i]
+		if result == image_class:
+			image = addSquare(image, subWindowsIndexes[i])
+			correct += 1
+	print("Accuracy: ", correct / len(results))
+	plt.imshow(image, cmap="gray")
+	plt.show(block=True)
+
 def main():
 	dataset = readDataset(TRAIN_POS_PATH, TRAIN_NEG_PATH)
-	print("Read test dataset of", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative images")
+	print("Read train dataset of", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative images")
 
 	if len(sys.argv) == 2:
 		svm_classifier = joblib.load(sys.argv[1])
@@ -397,9 +442,15 @@ def main():
 		svm_classifier = train(dataset)
 
 	# Read the testing dataset and run it.
-	dataset = readDataset(TEST_POS_PATH, TEST_NEG_PATH)
-	(data, classes) = prepare_data_for_svm(dataset, None, True)
-	svm_classify(svm_classifier, data, classes)
+	#dataset = readDataset(TEST_POS_PATH, TEST_NEG_PATH)
+
+	#(data, classes) = prepare_data_for_svm(dataset, None, True)
+	#svm_classify(svm_classifier, data, classes)
+
+	print("Read test dataset of", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative images")
+	test_and_show_image(svm_classifier, dataset["pos"][0], "pos")
+	#(data, classes) = prepare_data_for_svm(dataset, None, True)
+	#svm_classify(svm_classifier, data, classes)
 
 if __name__ == "__main__":
 	main()
