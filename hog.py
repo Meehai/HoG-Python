@@ -94,8 +94,8 @@ def readDataset(positive_train_path, negative_train_path):
 	result = {"pos":[], "neg":[]}
 	positive_files = [f for f in os.listdir(positive_train_path) if isfile(join(positive_train_path, f))]
 	negative_files = [f for f in os.listdir(negative_train_path) if isfile(join(negative_train_path, f))]
-	positive_files = positive_files[0:10]
-	negative_files = negative_files[0:10]
+	positive_files = positive_files[0:1]
+	negative_files = negative_files[0:2]
 
 	for image_name in positive_files:
 		image_path = positive_train_path + os.sep + image_name
@@ -317,15 +317,15 @@ def prepare_data_for_svm(dataset, random_negative_windows_count=10, useIntegralI
 	gradientImage = None
 	integralHistogram = None
 
-	if useIntegralImage:
-		gradientImage = computeCenteredGradient(image, (image.shape[0], image.shape[1]))
-		integralHistogram = getIntegralHistogram(gradientImage)
-
 	i = 0
 	for image in dataset["neg"]:
 		i += 1
 		# Get random windows in each negative image for training.
 		print(i, image.shape)
+		if useIntegralImage:
+			gradientImage = computeCenteredGradient(image, (image.shape[0], image.shape[1]))
+			integralHistogram = getIntegralHistogram(gradientImage)
+
 		subWindowsIndexes = getSubWindows(image)
 		if random_negative_windows_count != None:
 			subWindowsIndexes = random.sample(subWindowsIndexes, random_negative_windows_count)
@@ -355,12 +355,12 @@ def train(dataset):
 	# Testing all 4 types of SVMs and printing the accuracy by testing on the training set
 	rbf_svc = svm.SVC(kernel="rbf", gamma=0.7, C=C).fit(data, classes)
 	svm_classify(rbf_svc, data, classes, "RBF")
-	linear_svc = svm.SVC(kernel="linear").fit(data, classes)
-	svm_classify(linear_svc, data, classes, "Linear")
-	polynomial_svc = svm.SVC(kernel="poly").fit(data, classes)
-	svm_classify(polynomial_svc, data, classes, "Polynomial")
-	sigmoid_svc = svm.SVC(kernel="sigmoid").fit(data, classes)
-	svm_classify(sigmoid_svc, data, classes, "Sigmoid")
+	#linear_svc = svm.SVC(kernel="linear").fit(data, classes)
+	#svm_classify(linear_svc, data, classes, "Linear")
+	#polynomial_svc = svm.SVC(kernel="poly").fit(data, classes)
+	#svm_classify(polynomial_svc, data, classes, "Polynomial")
+	#sigmoid_svc = svm.SVC(kernel="sigmoid").fit(data, classes)
+	#svm_classify(sigmoid_svc, data, classes, "Sigmoid")
 
 	# Export the trained RBF SVM to current.
 	print("Exporting SVM to", EXPORT_FILENAME)
@@ -409,13 +409,17 @@ def test_and_show_image(svm, image, image_class):
 	print("Testing one image of shape:", image.shape, "Class:", image_class)
 	subWindowsIndexes = getSubWindows(image)
 	descriptors = []
+
+	gradientImage = computeCenteredGradient(image, (image.shape[0], image.shape[1]))
+	integralHistogram = getIntegralHistogram(gradientImage)
 	print("Number of windows:", len(subWindowsIndexes))
 	for index in subWindowsIndexes:
 		top_left = index[0]
 		bottom_right = index[1]
 		sub_image = np.array(image[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]])
-		# Save the descriptor of the sub image.
-		descriptor = train_image(sub_image)
+		# Save the descriptor of the sub image
+		cells_matrix = getOrientationBinMatrix(gradientImage, integralHistogram, top_left, bottom_right)
+		descriptor = getHogDescriptor(cells_matrix)
 		descriptors.append(descriptor)
 
 	classes = [image_class] * len(descriptors)
@@ -442,15 +446,16 @@ def main():
 		svm_classifier = train(dataset)
 
 	# Read the testing dataset and run it.
-	#dataset = readDataset(TEST_POS_PATH, TEST_NEG_PATH)
+	dataset = readDataset(TEST_POS_PATH, TEST_NEG_PATH)
 
 	#(data, classes) = prepare_data_for_svm(dataset, None, True)
 	#svm_classify(svm_classifier, data, classes)
 
 	print("Read test dataset of", len(dataset["pos"]), "positive images and", len(dataset["neg"]), "negative images")
-	test_and_show_image(svm_classifier, dataset["pos"][0], "pos")
-	#(data, classes) = prepare_data_for_svm(dataset, None, True)
-	#svm_classify(svm_classifier, data, classes)
+	#for i in range(len(dataset["neg"])):
+	#	test_and_show_image(svm_classifier, dataset["neg"][i], "pos")
+	(data, classes) = prepare_data_for_svm(dataset, None, True)
+	svm_classify(svm_classifier, data, classes)
 
 if __name__ == "__main__":
 	main()
