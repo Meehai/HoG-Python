@@ -94,8 +94,8 @@ def readDataset(positive_train_path, negative_train_path):
 	result = {"pos":[], "neg":[]}
 	positive_files = [f for f in os.listdir(positive_train_path) if isfile(join(positive_train_path, f))]
 	negative_files = [f for f in os.listdir(negative_train_path) if isfile(join(negative_train_path, f))]
-	positive_files = positive_files #[0:100]
-	negative_files = negative_files #[0:10]
+	positive_files = positive_files[0:10]
+	negative_files = negative_files[0:10]
 
 	for image_name in positive_files:
 		image_path = positive_train_path + os.sep + image_name
@@ -138,7 +138,10 @@ def createOrientationBinning(num_bins, cell_indexes, gradient_values):
 	return bins
 
 # Output: a matrix of each Histogram cell of shape num_cells_i, num_cells_j
-def getOrientationBinMatrix(gradientImage, integralHistogram = np.array([])):
+def getOrientationBinMatrix(gradientImage, integralHistogram = np.array([]), topLeftWindow = None, bottomRightWindow = None):
+	if topLeftWindow != None:
+		gradientImage = gradientImage[topLeftWindow[0]:bottomRightWindow[0], topLeftWindow[1]:bottomRightWindow[1]]
+
 	cell_indexes = getCellIndexes(gradientImage, CELL_SIZE)
 	#print("Number of cells of test image:", len(cell_indexes))
 
@@ -154,7 +157,7 @@ def getOrientationBinMatrix(gradientImage, integralHistogram = np.array([])):
 	else:
 		for i in range(num_cells_i):
 			for j in range(num_cells_j):
-				cell_matrix[i][j] = getRectangleIntegralHistogram(integralHistogram, cell_indexes[cell_index])
+				cell_matrix[i][j] = getRectangleIntegralHistogram(integralHistogram, cell_indexes[cell_index], topLeftWindow, bottomRightWindow)
 				cell_index += 1
 	return cell_matrix
 
@@ -221,14 +224,20 @@ def get_hard_negatives(svm, negative_set):
 		i += 1
 		subWindowsIndexes = getSubWindows(image)
 		percentIndexes = 1
-		subWindowsIndexes = random.sample(subWindowsIndexes, int(len(subWindowsIndexes) * percentIndexes))
+		#subWindowsIndexes = random.sample(subWindowsIndexes, int(len(subWindowsIndexes) * percentIndexes))
+		gradientImage = computeCenteredGradient(image, (image.shape[0], image.shape[1]))
+		integralHistogram = getIntegralHistogram(gradientImage)
 		# Create sub image
+		print(len(subWindowsIndexes))
 		for index in subWindowsIndexes:
 			top_left = index[0]
 			bottom_right = index[1]
 			sub_image = np.array(image[top_left[0]:bottom_right[0], top_left[1]:bottom_right[1]])
 			# Save the descriptor of the sub image.
-			descriptor = train_image(sub_image)
+
+			cells_matrix = getOrientationBinMatrix(gradientImage, integralHistogram, top_left, bottom_right)
+			descriptor = getHogDescriptor(cells_matrix)
+			
 			descriptors.append(descriptor)
 
 	print("Testing on ", len(descriptors), "negative inputs")
@@ -255,10 +264,10 @@ def getIntegralHistogram(gradientImage):
 
 	return np.array(integralHistogram)
 
-def getRectangleIntegralHistogram(integralHistogram, cell_indexes):
+def getRectangleIntegralHistogram(integralHistogram, cell_indexes, topLeftWindow, bottomRightWindow):
 	# topLeft si bottomRight elements are inside the rectangle
-	topLeft = (cell_indexes[0][0] + 1, cell_indexes[0][1] + 1)
-	bottomRight = cell_indexes[1]
+	topLeft = (cell_indexes[0][0] + 1 + topLeftWindow[0], cell_indexes[0][1] + 1 + topLeftWindow[1])
+	bottomRight = (cell_indexes[1][0] + topLeftWindow[0], cell_indexes[1][1] + topLeftWindow[1]);
 	topRight = [topLeft[0], bottomRight[1]]
 	bottomLeft = [bottomRight[0], topLeft[1]]
 	rectangleBin = integralHistogram[bottomRight[0]][bottomRight[1]] + integralHistogram[topLeft[0] - 1][topLeft[1] - 1] - \
@@ -273,19 +282,28 @@ def train_image(image):
 
 	return hog_descriptor
 
-def getHogFromIntegralImage(gradientImage, integralHistogram):
-	cells_matrix = getOrientationBinMatrix(gradientImage, integralHistogram)
-	hog_descriptor = getHogDescriptor(cells_matrix)
-	return hog_descriptor
-
 def svm_classify(svm, data, classes, message="RBF"):
-	good = 0
+	tp = 0
+	fp = 0
+	fn = 0
+	tn = 0
 	result = svm.predict(data)
 	assert(len(result) == len(classes))
 	for i in range(len(result)):
-		if result[i] == classes[i]:
-			good += 1
-	print("[", message, "] Accuracy on training set: ", good / len(result), sep="")
+		if classes[i] == "pos":
+			if result[i] == "pos":
+				tp += 1
+			else:
+				fn += 1
+		else:
+			if result[i] == "pos":
+				fp += 1
+			else:
+				tn += 1
+
+	acc = (tp + tn) / (tp + fp + fn + tn)
+	print("[", message, "] tp =  ", tp, " fp = ", fp, " fn = ", fn, " tn = \n", tn, sep="")
+	print("[", message, "] Accuracy on training set: ", acc, sep="")
 
 def prepare_data_for_svm(dataset, random_negative_windows_count=10, useIntegralImage = False):
 	data = []
@@ -305,7 +323,7 @@ def prepare_data_for_svm(dataset, random_negative_windows_count=10, useIntegralI
 	integralHistogram = None
 
 	if useIntegralImage:
-		gradientImage = computeCenteredGradient(image)
+		gradientImage = computeCenteredGradient(image, (image.shape[0], image.shape[1]))
 		integralHistogram = getIntegralHistogram(gradientImage)
 
 	i = 0
@@ -323,7 +341,8 @@ def prepare_data_for_svm(dataset, random_negative_windows_count=10, useIntegralI
 
 			descriptor = None
 			if useIntegralImage:
-				descriptor = getHogFromIntegralImage(gradientImage, integralHistogram)
+				cells_matrix = getOrientationBinMatrix(gradientImage, integralHistogram, top_left, bottom_right)
+				descriptor = getHogDescriptor(cells_matrix)
 			else:
 				descriptor = train_image(sub_image)
 				
@@ -354,10 +373,11 @@ def train(dataset):
 
 	# Get hard negatives and add them to the negative training set and then re-train the SVM with them as well.
 	hard_negatives = get_hard_negatives(rbf_svc, dataset["neg"])
-	print("Returned", len(hard_negatives), "hard negatives. Adding them to negative dataset")	
-	data.extend(hard_negatives)
-	classes.extend(["neg"] * len(hard_negatives))
-	rbf_svc = svm.SVC(kernel='rbf', gamma=0.7, C=C).fit(data, classes)
+	print(len(hard_negatives))
+#	print("Returned", len(hard_negatives), "hard negatives. Adding them to negative dataset")	
+#	data.extend(hard_negatives)
+#	classes.extend(["neg"] * len(hard_negatives))
+#	rbf_svc = svm.SVC(kernel='rbf', gamma=0.7, C=C).fit(data, classes)
 	test_on_training_set("RBF", rbf_svc, data, classes)
 
 	# Export the re-trained SVM with hard negatives.
@@ -378,7 +398,7 @@ def main():
 
 	# Read the testing dataset and run it.
 	dataset = readDataset(TEST_POS_PATH, TEST_NEG_PATH)
-	(data, classes) = prepare_data_for_svm(dataset)
+	(data, classes) = prepare_data_for_svm(dataset, None, True)
 	svm_classify(svm_classifier, data, classes)
 
 if __name__ == "__main__":
